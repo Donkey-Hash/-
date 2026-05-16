@@ -1,0 +1,360 @@
+USART3(MB3) Modbus-RTU 从站：从接收帧到写寄存器的详细调用链
+========================================================
+
+本文记录当前工程中 **USART3 作为第二条 Modbus-RTU 从站口（MB3）** 时，
+从“收到一帧通信数据”开始，一直到“回调写入保持寄存器(usRegHoldingBuf)”的完整函数跳转路径，
+并标注关键状态变量的变化位置，便于你在 Keil 中断点/Watch 跟踪。
+
+适用版本/前置条件
+----------------
+1) 需要开启 USART3 从站（MB3）
+- 文件：Inc/main.h
+- 宏：APP_USART3_MODBUS_SLAVE_MB3
+- 期望值：#define APP_USART3_MODBUS_SLAVE_MB3 1
+
+2) USART3 从站任务已创建并运行
+- 文件：Src/freertos.c
+- 位置：USART3TaskHandle = osThreadNew(USART3Task, ...)
+
+3) USART3 的 Modbus 从站轮询任务
+- 文件：Tasks/src/uartsrxtask.c
+- 函数：void USART3Task(void const *argument)
+- 核心调用：eMB3Init() -> eMB3Enable() -> 循环 eMB3Poll()
+
+4) RS485 方向控制
+- 文件：FreeModbus/port/portserial.c
+- 函数：vMBPortSerialEnable3()
+- 说明：本工程用 H_RS485_TX / H_RS485_RX 控制 USART3 的 485 DE/RE 方向。
+
+5) 两总线共用寄存器的互斥（可选但推荐）
+- 文件：Src/freertos.c 创建 ModbusBusMutexHandle
+- 文件：Tasks/src/uartsrxtask.c 在 eMB3Poll()/eMBPoll() 前后 Acquire/Release
+
+
+一、例子：写单个保持寄存器（功能码 0x06）
+--------------------------------------
+示例目标：主站往从站 ID=1 写“保持寄存器 0（40001）”写入值 0x0001。
+在本工程里，该寄存器对应 pMbHoldData->nHostCMD（上位机命令）。
+写入值 1 对应 CMD_SET_BAUD（相对安全：任务处理里会清空命令，不会开阀/跑泵）。
+
+Modbus RTU 原始帧（十六进制，含 CRC）：
+  01 06 00 00 00 01 48 0A
+含义：
+  01        : Slave Address = 1
+  06        : Function = 0x06 (Write Single Holding Register)
+  00 00     : Register Address = 0x0000 (从 0 开始计数)
+  00 01     : Value = 0x0001
+  48 0A     : CRC16 (低字节在前：0x48,0x0A)
+
+注意（地址 +1 规则）：
+FreeModbus 的 mbfuncholding.c 会对寄存器地址执行 usRegAddress++，
+因此主站请求地址 0x0000 -> 回调 eMBRegHoldingCB 收到 usAddress = 1，
+最终写入 usRegHoldingBuf[0]（索引 0）。
+
+
+二、完整调用链：USART3 收到帧 -> 写寄存器
+--------------------------------------
+
+Step 0：任务初始化（发生在系统启动后）
+--------------------------------
+执行上下文：任务（USART3Task）
+文件/函数：Tasks/src/uartsrxtask.c -> USART3Task()
+
+1) eMB3Init(MB_RTU, ucSlaveAddress, ucPort, ulBaudRate, MB_PAR_NONE)
+   - 文件：FreeModbus/modbus/mb.c -> eMB3Init()
+   - 关键设置（函数指针/回调入口）：
+     - pxMBFrameCBByteReceived3 = xMBRTUReceiveFSM3
+     - pxMBFrameCBTransmitterEmpty3 = xMBRTUTransmitFSM3
+     - pxMBPortCBTimerExpired3 = xMBRTUTimerT35Expired3
+     - peMBFrameReceiveCur3 = eMBRTUReceive3
+     - peMBFrameSendCur3 = eMBRTUSend3
+   - 状态变化：
+     - ucMBAddress3 = SlaveAddress（例如 1）
+     - eMBState3 = STATE3_DISABLED
+
+2) eMB3Enable()
+   - 文件：FreeModbus/modbus/mb.c -> eMB3Enable()
+   - 状态变化：
+     - eMBState3: STATE3_DISABLED -> STATE3_ENABLED
+   - 进入 RTU 启动：
+     - pvMBFrameStartCur3() -> eMBRTUStart3()
+
+3) eMBRTUStart3()
+   - 文件：FreeModbus/modbus/rtu/mbrtu.c -> eMBRTUStart3()
+   - 关键状态变化：
+     - eRcvState3 = STATE_RX_INIT
+   - 使能串口接收中断 + 启动 T3.5 定时：
+     - vMBPortSerialEnable3(TRUE, FALSE)  // 开 RXNE，关 TXE，方向切到 RX
+     - vMBPortTimersEnable3()             // 启动 TIM7，用于“总线空闲检测/帧结束判定”
+
+说明：启动后先处于 STATE_RX_INIT，
+等待总线连续空闲一个 T3.5，才会进入 STATE_RX_IDLE（表示可以开始接收一帧）。
+这个“INIT -> IDLE”的切换由定时器超时回调完成（见 Step 2）。
+
+
+Step 1：USART3 收到每一个字节（RXNE 中断路径）
+-------------------------------------------
+执行上下文：中断（USART3_IRQHandler）
+文件/函数：Src/stm32f4xx_it.c -> USART3_IRQHandler()
+
+触发条件：USART3 收到 1 字节后，硬件置位 RXNE。
+
+关键跳转：
+1) USART3_IRQHandler() 检测 RXNE
+   - if(LL_USART_IsActiveFlag_RXNE(pModbusUart3))
+     -> prvvUART3RxISR()
+
+2) prvvUART3RxISR()
+   - 文件：FreeModbus/port/portserial.c
+   - 调用：pxMBFrameCBByteReceived3()
+     （该函数指针在 eMB3Init 时被设置为 xMBRTUReceiveFSM3）
+
+3) xMBRTUReceiveFSM3()
+   - 文件：FreeModbus/modbus/rtu/mbrtu.c
+   - 首先读取 1 字节：
+     - xMBPortSerialGetByte3(&ucByte)
+       -> 文件：FreeModbus/port/portserial.c -> xMBPortSerialGetByte3()
+       -> 读取 USART3->DR
+   - 根据接收状态机 eRcvState3 处理：
+     a) STATE_RX_INIT：
+        - 仅重启 T3.5 计时：vMBPortTimersEnable3()
+        - eRcvState3 不变
+     b) STATE_RX_IDLE：
+        - usRcvBufferPos3 = 0
+        - ucRTUInBuf3[0] = ucByte
+        - usRcvBufferPos3++（变为 1）
+        - eRcvState3 = STATE_RX_RCV
+        - vMBPortTimersEnable3()（启动/重置 T3.5，等待帧结束）
+     c) STATE_RX_RCV：
+        - 把字节追加到 ucRTUInBuf3[usRcvBufferPos3]
+        - usRcvBufferPos3++（每收 1 字节 +1）
+        - vMBPortTimersEnable3()（每个字节都重置 T3.5）
+     d) STATE_RX_ERROR：
+        - 继续重置 T3.5，等待坏帧结束
+
+你可以 Watch 的关键变量（mbrtu.c 里定义）：
+- eRcvState3
+- usRcvBufferPos3
+- ucRTUInBuf3[0..n]
+
+
+Step 2：帧结束判定（T3.5 定时器超时）
+----------------------------------
+执行上下文：中断（TIM7_IRQHandler）
+文件/函数：Src/stm32f4xx_it.c -> TIM7_IRQHandler()
+
+触发条件：连续超过 T3.5 时间没有新字节到来（帧间隔成立）。
+
+关键跳转：
+1) TIM7_IRQHandler()
+   - 调用：TIMER3ExpiredISR()
+
+2) TIMER3ExpiredISR()
+   - 文件：FreeModbus/port/porttimer.c
+   - 调用：pxMBPortCBTimerExpired3()
+     （该函数指针在 eMB3Init 时设置为 xMBRTUTimerT35Expired3）
+
+3) xMBRTUTimerT35Expired3()
+   - 文件：FreeModbus/modbus/rtu/mbrtu.c
+   - 根据 eRcvState3 决定投递事件：
+     a) STATE_RX_INIT：
+        - xMBPortEventPost3(EV_READY)
+     b) STATE_RX_RCV：
+        - xMBPortEventPost3(EV_FRAME_RECEIVED)  // 一帧接收完成
+     c) STATE_RX_ERROR：
+        - 不投递（坏帧丢弃）
+   - 定时器与状态收尾：
+     - vMBPortTimersDisable3()
+     - eRcvState3 = STATE_RX_IDLE
+
+4) xMBPortEventPost3(eEvent)
+   - 文件：FreeModbus/port/portevent.c
+   - 事件“单槽队列”写入：
+     - xEventInQueue3 = TRUE
+     - eQueuedEvent3 = eEvent（例如 EV_FRAME_RECEIVED）
+   - 释放信号量，唤醒 USART3Task：
+     - osSemaphoreRelease(USART3RxHandle)
+
+你可以 Watch 的关键变量（portevent.c 里定义）：
+- xEventInQueue3
+- eQueuedEvent3
+
+
+Step 3：USART3Task 被唤醒，开始轮询事件（第一次 eMB3Poll）
+----------------------------------------------------
+执行上下文：任务（USART3Task）
+文件/函数：Tasks/src/uartsrxtask.c -> USART3Task()
+
+触发条件：USART3RxHandle 被 release。
+
+关键跳转：
+1) USART3Task() 等待信号量
+   - osSemaphoreAcquire(USART3RxHandle, 500) == osOK
+
+2) eMB3Poll()
+   - 文件：FreeModbus/modbus/mb.c -> eMB3Poll()
+   - 读取事件：
+     - xMBPortEventGet3(&eEvent)
+       -> 文件：FreeModbus/port/portevent.c -> xMBPortEventGet3()
+       -> 返回 eQueuedEvent3，并清 xEventInQueue3
+
+3) 若 eEvent == EV_FRAME_RECEIVED：
+   - 调用：peMBFrameReceiveCur3(&ucRcvAddress, &ucMBFrame, &usLength)
+     -> 在 RTU 模式下实际指向 eMBRTUReceive3()
+   - eMBRTUReceive3 做的事：
+     - 校验长度/CRC：usMBCRC16(ucRTUInBuf3, usRcvBufferPos3) == 0
+     - 取从站地址：ucRcvAddress = ucRTUInBuf3[0]
+     - 计算 PDU 长度：usLength = usRcvBufferPos3 - 1 - 2
+     - 复制 PDU 到 ucRTUOutBuf3[1..]，并把 ucMBFrame 指向 &ucRTUOutBuf3[1]
+
+4) 地址匹配则投递执行事件：
+   - if(ucRcvAddress == ucMBAddress3 || 广播/公共地址)
+     -> xMBPortEventPost3(EV_EXECUTE)
+   - 这一步会再次 osSemaphoreRelease(USART3RxHandle)
+
+重要现象（很多人第一次跟踪会困惑）：
+一帧完整报文通常会导致 USART3Task 被唤醒至少两次：
+  - 第一次：处理 EV_FRAME_RECEIVED（把帧解析出来，并投递 EV_EXECUTE）
+  - 第二次：处理 EV_EXECUTE（真正执行功能码、写寄存器、回包）
+
+
+Step 4：USART3Task 再次被唤醒，执行功能码（第二次 eMB3Poll）
+-----------------------------------------------------
+执行上下文：任务（USART3Task）
+文件/函数：FreeModbus/modbus/mb.c -> eMB3Poll()
+
+触发条件：上一步投递 EV_EXECUTE 时释放了 USART3RxHandle。
+
+关键跳转：
+1) eMB3Poll() 取到 eEvent == EV_EXECUTE
+2) 取功能码：
+   - ucFunctionCode = ucMBFrame[MB_PDU_FUNC_OFF]
+   - 对于例子帧 0x06：ucFunctionCode = 0x06
+3) 查表调用对应处理函数：
+   - xFuncHandlers[i].pxHandler(ucMBFrame, &usLength)
+   - 0x06 -> eMBFuncWriteHoldingRegister()
+     文件：FreeModbus/modbus/functions/mbfuncholding.c
+
+4) eMBFuncWriteHoldingRegister()
+   - 从 PDU 取寄存器地址（0 基）并 +1：
+     - usRegAddress = (AddrHi<<8 | AddrLo); usRegAddress++;
+   - 调用保持寄存器回调写入：
+     - eMBRegHoldingCB(&pucFrame[MB_PDU_FUNC_WRITE_VALUE_OFF],
+                       usRegAddress, 1, MB_REG_WRITE)
+
+5) eMBRegHoldingCB()
+   - 文件：FreeModbus/modbus/Modbus.c -> eMBRegHoldingCB()
+   - 地址范围校验：
+     - REG_HOLDING_START = 1（见 FreeModbus/modbus/include/Modbus.h）
+   - 索引换算：
+     - iRegIndex = usAddress - usRegHoldingStart
+     - 对于例子：usAddress=1 -> iRegIndex=0
+   - 写入寄存器（大端字节拼 16bit）：
+     - usRegHoldingBuf[iRegIndex] = (hi<<8) | lo
+   - 本工程的附加行为：
+     - if(iRegIndex == 0) HaveNewCMDFlag = true;
+     - else if(0 < iRegIndex < 10) { usRegHoldingBuf[0] = iRegIndex; HaveNewCMDFlag = true; }
+
+到这里为止，“Modbus 写寄存器”的内存修改已经发生：
+- usRegHoldingBuf[0] 已被写成 0x0001（例子）
+- pMbHoldData->nHostCMD（映射到同一块 holding buf）也会表现为 1
+
+寄存器缓冲区的来源（指针关系）
+----------------------------
+文件：Bsp/src/FlashUserData.c
+- USHORT *usRegHoldingBuf = AllDevsData.tModbusData.mbHoldingBuf;
+- MODBUS_HOLDING_REG_t *pMbHoldData = (MODBUS_HOLDING_REG_t*)AllDevsData.tModbusData.mbHoldingBuf;
+因此：
+  usRegHoldingBuf[0] <=> pMbHoldData->nHostCMD
+
+
+Step 5：从站回包发送（USART3 TXE 中断路径）
+----------------------------------------
+执行上下文：任务 + 中断混合
+
+1) eMB3Poll() 在 EV_EXECUTE 分支的末尾会发送响应：
+   - peMBFrameSendCur3(ucMBAddress3, ucMBFrame, usLength)
+   - 在 RTU 模式下指向 eMBRTUSend3()
+     文件：FreeModbus/modbus/rtu/mbrtu.c -> eMBRTUSend3()
+
+2) eMBRTUSend3()
+   - 组帧 + 追加 CRC
+   - 状态变化：
+     - eSndState3 = STATE_TX_XMIT
+   - 打开发送（使能 TXE）并切换 485 方向到 TX：
+     - vMBPortSerialEnable3(FALSE, TRUE)
+       文件：FreeModbus/port/portserial.c
+
+3) USART3_IRQHandler() 发送中断驱动
+   - 当 TXE 触发：
+     - prvvUART3TxReadyISR()
+       -> pxMBFrameCBTransmitterEmpty3()
+       -> xMBRTUTransmitFSM3()
+         文件：FreeModbus/modbus/rtu/mbrtu.c -> xMBRTUTransmitFSM3()
+   - xMBRTUTransmitFSM3 在 STATE_TX_XMIT 下：
+     - xMBPortSerialPutByte3(*pucSndBufferCur3) 写 USART3->DR
+     - usSndBufferCount3--，直到 0
+   - 当发送完最后一个字节：
+     - xMBPortEventPost3(EV_FRAME_SENT)
+     - xMBPortSerialWaitTC3() 等待 TC
+     - vMBPortSerialEnable3(TRUE, FALSE) 切回 RX（H_RS485_RX）
+     - eSndState3 = STATE_TX_IDLE
+
+
+Step 6：应用层命令处理（把命令寄存器清零等）
+------------------------------------------
+执行上下文：任务（USART3Task）
+文件/函数：Tasks/src/uartsrxtask.c -> USART3Task()
+
+在一次 eMB3Poll() 调用返回后，USART3Task 会检查：
+  if (HaveNewCMDFlag) { RS232CmdProcess(); HaveNewCMDFlag = false; }
+
+RS232CmdProcess()
+- 文件：Tasks/src/uartsrxtask.c -> RS232CmdProcess()
+- 对于 CMD_SET_BAUD / CMD_SET_LOCAL_ADD：
+  - pMbHoldData->nHostCMD = CMD_NONE;
+这会把 usRegHoldingBuf[0] 再次写回 0（命令清空）。
+
+所以你在主站侧看到的现象通常是：
+  写入命令寄存器 -> 很快被设备清零（这是正常设计行为，不是写失败）
+
+
+三、建议的断点/Watch 清单（跟踪最省事）
+------------------------------------
+如果你要在 Keil 里跟踪“从收到帧到写寄存器”：
+
+推荐断点（按触发顺序）：
+1) Src/stm32f4xx_it.c : USART3_IRQHandler()
+2) FreeModbus/modbus/rtu/mbrtu.c : xMBRTUReceiveFSM3()
+3) Src/stm32f4xx_it.c : TIM7_IRQHandler()
+4) FreeModbus/modbus/rtu/mbrtu.c : xMBRTUTimerT35Expired3()
+5) FreeModbus/modbus/mb.c : eMB3Poll()（关注 EV_FRAME_RECEIVED / EV_EXECUTE 两次）
+6) FreeModbus/modbus/functions/mbfuncholding.c : eMBFuncWriteHoldingRegister()
+7) FreeModbus/modbus/Modbus.c : eMBRegHoldingCB()
+
+推荐 Watch 变量（关键状态变化都在这几处体现）：
+- eMBState3（FreeModbus/modbus/mb.c 静态变量）
+- eRcvState3 / eSndState3 / usRcvBufferPos3（FreeModbus/modbus/rtu/mbrtu.c）
+- xEventInQueue3 / eQueuedEvent3（FreeModbus/port/portevent.c）
+- usRegHoldingBuf[0]、pMbHoldData->nHostCMD（Bsp/src/FlashUserData.c 指向的缓冲区）
+- HaveNewCMDFlag（Tasks/src/uartsrxtask.c）
+
+
+四、常见“卡住/不回包”的定位提示
+----------------------------
+1) 只进 RXNE，不进 TIM7：
+- 说明 T3.5 没超时（可能一直在进字节，或者 TIM7 没开/被别的地方关了）
+- 重点看：vMBPortTimersEnable3()/vMBPortTimersDisable3() 是否被调用，TIM7_IRQn 是否使能
+
+2) 进了 EV_FRAME_RECEIVED，但没有 EV_EXECUTE：
+- 多半是地址不匹配（ucRcvAddress != ucMBAddress3）
+- 检查：pMbHoldData->nLocalAddr 当前值，主站发的 Slave ID
+
+3) EV_EXECUTE 执行了，但写寄存器没变化：
+- 检查：eMBRegHoldingCB 的地址范围判断是否返回 MB_ENOREG
+- 检查：主站请求的寄存器地址是否越界（本工程 REG_HOLDING_NREGS = 512）
+
+4) 回包不完整/总线一直占用：
+- 看 vMBPortSerialEnable3() 是否能在发送完后切回 RX（H_RS485_RX）
+- 看 xMBPortSerialWaitTC3() 是否能等到 TC
+

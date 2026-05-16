@@ -1,0 +1,46 @@
+﻿flowchart TD
+  PWR[上电复位] --> MAIN[main初始化 外设时钟]
+  MAIN --> USER[InitUserData 初始化Modbus数据]
+  USER --> RTOS[MX_FREERTOS_Init 创建任务定时器]
+  RTOS --> START[osKernelStart 调度启动]
+
+  START --> PROC[ProcessControlTask 主循环]
+  START --> MB3[USART3Task eMB3Poll]
+  START --> MB6[USART6Task eMB6Poll]
+
+  MB3 --> RX[收到Modbus写入] --> HOLD[eMBRegHoldingCB 更新保持寄存器]
+  MB6 --> RX
+  HOLD --> NAR[nAutoRun 写入大于0]
+
+  PROC --> CHECK{检测 nAutoRun}
+  CHECK -- 为0 --> PROC
+  CHECK -- 大于0 --> PREP[RW50=nAutoRun 清零nAutoRun AutoStep=1 SaveUserData]
+  PREP --> AR[AutoRun AutoStep状态机]
+
+  AR --> TSTART[周期模式 启动SampleTimeOut定时器]
+  TSTART --> S1[1 排空管路比色皿]
+  S1 --> S2[2 零标清洗及分支]
+  S2 --> S3[3 液位阈值校准]
+  S3 --> S4[4 外接泵循环控温]
+  S4 --> S5[5 进样]
+  S5 --> S6[6 加试剂1]
+  S6 --> S7[7 消解加热 冷却]
+  S7 --> S8[8 加蒸馏水]
+  S8 --> S9[9 加试剂2]
+  S9 --> S10[10 补偿预留]
+  S10 --> S11[11 加试剂3 鼓泡]
+  S11 --> S12[12 静置反应]
+  S12 --> S13[13 取V2]
+  S13 --> S14[14 排液清洗]
+  S14 --> S15[15 温度稳定]
+  S15 --> S16[16 取V1]
+  S16 --> S17[17 计算吸光度]
+  S17 --> S18[18 关闭外设]
+  S18 --> S19[19 计算浓度或标定]
+  S19 --> S20[20 模式收尾]
+
+  S20 --> RET[周期模式 AutoStep=0 AutoRun返回]
+  RET --> PROC
+
+  TSTART -->|nClockTime分钟后| TCB[SampleTimeOutCallback AutoStep=1 nAutoRun=1]
+  TCB --> NAR

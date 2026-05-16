@@ -1,0 +1,87 @@
+<html>
+<body>
+<pre>
+<h1>礦ision Build Log</h1>
+<h2>Tool Versions:</h2>
+IDE-Version: μVision V5.14.0.0
+Copyright (C) 2015 ARM Ltd and ARM Germany GmbH. All rights reserved.
+License Information: zhu Administrator, esun, LIC=PE7DL-0DS4H-VENHA-10Z2G-A9NMF-P1GI8
+ 
+Tool Versions:
+Toolchain:       MDK-ARM Standard  Version: 5.14.0.0
+Toolchain Path:  C:\Keil_v5\ARM\ARMCC\Bin
+C Compiler:      Armcc.exe V5.05 update 1 (build 106)
+Assembler:       Armasm.exe V5.05 update 1 (build 106)
+Linker/Locator:  ArmLink.exe V5.05 update 1 (build 106)
+Library Manager: ArmAr.exe V5.05 update 1 (build 106)
+Hex Converter:   FromElf.exe V5.05 update 1 (build 106)
+CPU DLL:         SARMCM3.DLL V5.14.0.0
+Dialog DLL:      DCM.DLL V1.13.1.0
+Target DLL:      STLink\ST-LINKIII-KEIL_SWO.dll V2.0.14.0_KEIL
+Dialog DLL:      TCM.DLL V1.14.4.0
+ 
+<h2>Project:</h2>
+D:\水质单片机设备代码\谢天翔\0429重新\nanoWAys20240724改单片机+测润泽\MDK-ARM\nanoWAys.uvprojx
+Project File Date:  04/29/2026
+
+<h2>Output:</h2>
+Build target 'nanoWAys'
+compiling Modbus.c...
+compiling uartsrxtask.c...
+..\Tasks\src\uartsrxtask.c(644): warning:  #167-D: argument of type "void *" is incompatible with parameter of type "osThreadFunc_t"
+                                ProcTaskHandle = osThreadNew((void*)ProcessControlTask, NULL, &ProcTask_attributes);    // 鍒涘缓浠诲姟
+..\Tasks\src\uartsrxtask.c(1656): warning:  #1035-D: single-precision operand implicitly converted to double-precision
+        RUNZE_SET_ML(tmp_ml-0.1);       //0~6
+..\Tasks\src\uartsrxtask.c(1470): warning:  #177-D: variable "k" was declared but never referenced
+        uint16_t i = 0, j = 0, k = 0;
+..\Tasks\src\uartsrxtask.c(1873): warning:  #1035-D: single-precision operand implicitly converted to double-precision
+        HC_SET_ML(tmp_ml-0.1);  //0~6
+..\Tasks\src\uartsrxtask.c(1687): warning:  #177-D: variable "k" was declared but never referenced
+        uint16_t i = 0, j = 0, k = 0;
+..\Tasks\src\uartsrxtask.c(2369): warning:  #1035-D: single-precision operand implicitly converted to double-precision
+                        RUNZE_SET_ML(ml+0.7);   //0~6
+..\Tasks\src\uartsrxtask.c(2383): warning:  #1035-D: single-precision operand implicitly converted to double-precision
+                                RUNZE_SET_ML(ml+0.6);
+..\Tasks\src\uartsrxtask.c(2417): warning:  #1035-D: single-precision operand implicitly converted to double-precision
+                                RUNZE_SET_ML(ml+0.9);
+..\Tasks\src\uartsrxtask.c(2355): warning:  #177-D: variable "i" was declared but never referenced
+        u16 i = 0, j = 0;
+..\Tasks\src\uartsrxtask.c(2465): warning:  #1035-D: single-precision operand implicitly converted to double-precision
+                        HC_SET_ML(ml+0.7);      //0~6
+..\Tasks\src\uartsrxtask.c(2479): warning:  #1035-D: single-precision operand implicitly converted to double-precision
+                                HC_SET_ML(ml+0.6);
+..\Tasks\src\uartsrxtask.c(2514): warning:  #1035-D: single-precision operand implicitly converted to double-precision
+                                HC_SET_ML(ml+0.9);
+..\Tasks\src\uartsrxtask.c(2451): warning:  #177-D: variable "i" was declared but never referenced
+        u16 i = 0, j = 0;
+..\Tasks\src\uartsrxtask.c(2613): warning:  #177-D: variable "i" was declared but never referenced
+        u16 i = 0;
+..\Tasks\src\uartsrxtask.c(2645): warning:  #177-D: variable "i" was declared but never referenced
+        u16 i = 0;
+..\Tasks\src\uartsrxtask.c: 15 warnings, 0 errors
+linking...
+Program Size: Code=123358 RO-data=5346 RW-data=1132 ZI-data=43516  
+FromELF: creating hex file...
+After Build - User command #1: fromelf --bin --output .\nanoWAys\nanoWAys.bin .\nanoWAys\nanoWAys.axf
+"..\nanoWAys.axf" - 0 Error(s), 15 Warning(s).
+
+<h2>Software Packages used:</h2>
+
+Package Vendor: ARM
+                http://www.keil.com/pack/ARM.CMSIS.4.2.0.pack
+                ARM::CMSIS:CORE:3.40.0
+                CMSIS (Cortex Microcontroller Software Interface Standard)
+   * Component: CORE Version: 3.40.0
+
+<h2>Collection of Component include folders:</h2>
+  D:\水质单片机设备代码\谢天翔\0429重新\nanoWAys20240724改单片机+测润泽\MDK-ARM\RTE
+  C:\Keil_v5\ARM\PACK\ARM\CMSIS\4.2.0\CMSIS\Include
+  C:\Keil_v5\ARM\PACK\Keil\STM32F4xx_DFP\2.15.0
+
+<h2>Collection of Component Files used:</h2>
+
+   * Component: ARM::CMSIS:CORE:3.40.0
+      Source file:   CMSIS\UserCodeTemplates\ARM\ITM_Retarget.c
+</pre>
+</body>
+</html>

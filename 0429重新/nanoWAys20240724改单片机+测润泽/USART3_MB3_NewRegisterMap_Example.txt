@@ -1,0 +1,130 @@
+﻿目标
+----
+把 USART3（MB3，从站）单独使用一套新的 Modbus 寄存器映射（Holding/Input/Coil/Discrete），不再与 USART1/USART6 共用当前的 usRegHoldingBuf/usRegInputBuf 等缓冲区。
+
+说明：下面是“最小改动”的实现思路示例（只描述怎么改，不直接改代码）。
+
+
+现状定位（当前工程）
+-------------------
+1) USART3/USART6 从站任务入口：
+   - `Tasks/src/uartsrxtask.c:107` -> `USART3Task()` 调 `eMB3Init/eMB3Poll`
+   - `Tasks/src/uartsrxtask.c:149` -> `USART6Task()` 调 `eMB6Init/eMB6Poll`
+
+2) Modbus 寄存器回调（所有口共用同一套回调）：
+   - Holding：`FreeModbus/modbus/Modbus.c:79` -> `eMBRegHoldingCB(...)`
+   - Input：  `FreeModbus/modbus/Modbus.c:42` -> `eMBRegInputCB(...)`
+   - Coil：   `FreeModbus/modbus/Modbus.c:141` -> `eMBRegCoilsCB(...)`
+   - Discrete：`FreeModbus/modbus/Modbus.c:200` -> `eMBRegDiscreteCB(...)`
+
+3) 当前工程的寄存器地址范围：
+   - `FreeModbus/modbus/include/Modbus.h:11`  `REG_INPUT_START`
+   - `FreeModbus/modbus/include/Modbus.h:13`  `REG_HOLDING_START`
+   - `FreeModbus/modbus/include/Modbus.h:7`   `DISCRETE_INPUT_START`
+   - `FreeModbus/modbus/include/Modbus.h:9`   `COIL_START`
+   备注：本工程 `REG_HOLDING_START = 1`，所以主站请求地址 0x0000 对应回调里 `usAddress=1`（数组下标0/结构体第一个字段）。
+
+4) 现有寄存器缓冲区指针（全局、共用）：
+   - `Bsp/src/FlashUserData.c:55`~`Bsp/src/FlashUserData.c:60`
+     `usRegHoldingBuf/usRegInputBuf/usCoilBuf/usDiscreteInputBuf` 以及 `pMbHoldData/pMbInputData`
+
+
+实现思路（示例：让 MB3 使用独立缓冲区）
+-----------------------------------
+核心思想：寄存器回调不拆分成 eMBRegHoldingCB3 之类的新函数，而是在回调里根据“当前正在 Poll 的 Modbus 实例（口号 1/3/6）”切换到不同的缓冲区指针。
+
+
+步骤 1：新增一套 MB3 的寄存器结构（示例）
+----------------------------------------
+建议新增文件：`Bsp/inc/modbusdata_mb3.h`
+
+示例（Holding/Input 结构，字段顺序就是寄存器地址顺序）：
+
+    typedef struct {
+        uint16_t mb3_cmd;       // Holding 地址 1 (40001)
+        uint16_t mb3_param1;    // Holding 地址 2
+        uint16_t mb3_param2;    // Holding 地址 3
+        uint16_t reserved[509];
+    } MODBUS3_HOLDING_REG_t;
+
+    typedef struct {
+        uint16_t mb3_status;    // Input 地址 1 (30001)
+        uint16_t mb3_error;     // Input 地址 2
+        uint16_t reserved[510];
+    } MODBUS3_INPUT_REG_t;
+
+你可以只放你需要的寄存器，剩下用 reserved 补齐到 `REG_*_NREGS`。
+
+
+步骤 2：给 MB3 分配独立的寄存器缓冲区（示例）
+--------------------------------------------
+方案 A（更推荐）：新建 `Bsp/src/modbusdata_mb3.c` 存放 MB3 的 buffer 与指针。
+方案 B：直接在 `Bsp/src/FlashUserData.c` 旁边增加 MB3 的 buffer/指针（但会让 FlashUserData.c 更臃肿）。
+
+示例（关键是“多一套 usRegHoldingBuf3/usRegInputBuf3”）：
+
+    USHORT mb3HoldingBuf[REG_HOLDING_NREGS];
+    USHORT mb3InputBuf[REG_INPUT_NREGS];
+    UCHAR  mb3CoilBuf[COIL_NCOILS/8];
+    UCHAR  mb3DiscreteBuf[DISCRETE_INPUT_NDISCRETES/8];
+
+    USHORT *usRegHoldingBuf3 = mb3HoldingBuf;
+    USHORT *usRegInputBuf3   = mb3InputBuf;
+    UCHAR  *usCoilBuf3       = mb3CoilBuf;
+    UCHAR  *usDiscreteInputBuf3 = mb3DiscreteBuf;
+
+    MODBUS3_HOLDING_REG_t *pMb3HoldData = (MODBUS3_HOLDING_REG_t*)mb3HoldingBuf;
+    MODBUS3_INPUT_REG_t   *pMb3InputData = (MODBUS3_INPUT_REG_t*)mb3InputBuf;
+
+
+步骤 3：增加“当前 Modbus 实例”标记（口选择点）
+----------------------------------------------
+新增一个全局变量，例如：`volatile uint8_t g_mb_inst;`（1/3/6）
+
+在每个 Poll 入口设置它：
+  - `FreeModbus/modbus/mb.c:589` `eMBPoll()`      -> `g_mb_inst = 1;`
+  - `FreeModbus/modbus/mb.c:671` `eMB3Poll()`     -> `g_mb_inst = 3;`
+  - `FreeModbus/modbus/mb.c:741` `eMB6Poll()`     -> `g_mb_inst = 6;`
+
+这样寄存器回调里就能知道“当前是 MB3 还是默认口”。
+
+
+步骤 4：在寄存器回调里按实例切换缓冲区
+--------------------------------------
+修改位置（回调函数内部）：
+  - `FreeModbus/modbus/Modbus.c:79`  `eMBRegHoldingCB(...)`
+  - `FreeModbus/modbus/Modbus.c:42`  `eMBRegInputCB(...)`
+  - （如果要独立 Coil/Discrete）
+    `FreeModbus/modbus/Modbus.c:141` `eMBRegCoilsCB(...)`
+    `FreeModbus/modbus/Modbus.c:200` `eMBRegDiscreteCB(...)`
+
+示例（Holding/Input 的思路）：
+  - 保留原逻辑不变，只是把原本直接用的 `usRegHoldingBuf/usRegInputBuf` 换成“选出来的指针”：
+
+    USHORT *holding = (g_mb_inst == 3) ? usRegHoldingBuf3 : usRegHoldingBuf;
+    USHORT *input   = (g_mb_inst == 3) ? usRegInputBuf3   : usRegInputBuf;
+
+然后回调里对 `holding[iRegIndex]` / `input[iRegIndex]` 读写即可。
+
+
+步骤 5：非常关键的注意点（避免 MB3 写寄存器触发主口命令流程）
+-----------------------------------------------------------
+当前工程在 Holding 写入时会触发命令标志：
+  - `FreeModbus/modbus/Modbus.c:108` 附近：写 `iRegIndex==0` 会 `HaveNewCMDFlag = true`
+  - `Tasks/src/uartsrxtask.c:188` `RS232CmdProcess()` 读取的是全局 `pMbHoldData->nHostCMD`
+
+如果你给 MB3 单独一套寄存器映射但不处理这点，会出现：
+  - MB3 写入自己的 Holding[0]，却触发主口的 `HaveNewCMDFlag`；
+  - 进而执行主口的 `RS232CmdProcess()`（它读的是 `pMbHoldData` 那套，不是 MB3 的）。
+
+常见修正方式（二选一）：
+  1) “MB3 不触发命令”：在 `eMBRegHoldingCB` 里判断 `g_mb_inst==3` 时不要置 `HaveNewCMDFlag`。
+  2) “MB3 有自己的命令”：新增 `HaveNewCMDFlag3` + `RS232CmdProcess3()`，并在 `USART3Task()`（`Tasks/src/uartsrxtask.c:107`）里处理它。
+
+
+（可选）是否把 MB3 的寄存器也放进 Flash
+---------------------------------------
+当前 Flash 结构体里只有一套 `mbHoldingBuf/mbInputBuf/...`：
+  - `Bsp/inc/FlashUserData.h:72` `MODBUS_BUF_DATA_IN_FLASH`
+
+如果 MB3 的寄存器也要掉电保存，需要扩展该结构并同步读写 Flash 的逻辑；如果不需要保存，MB3 的 buffer 放 RAM 即可。

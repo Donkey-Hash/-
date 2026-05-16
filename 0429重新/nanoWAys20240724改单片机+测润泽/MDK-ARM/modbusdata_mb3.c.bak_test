@@ -1,0 +1,26 @@
+#include "modbusdata_mb3.h"
+
+/* 1. 定义实际的静态数组 (Static，只在当前文件可见，避免符号冲突) */
+//static USHORT _mb3_holding_buf[REG_HOLDING_NREGS] = {0};
+//static USHORT _mb3_input_buf[REG_INPUT_NREGS]     = {0};
+//static UCHAR  _mb3_coil_buf[COIL_NCOILS/8]        = {0};
+//static UCHAR  _mb3_discrete_buf[DISCRETE_INPUT_NDISCRETES/8] = {0};
+static USHORT _mb3_holding_buf[110] = {0};
+static USHORT _mb3_input_buf[400]     = {0};
+static UCHAR  _mb3_coil_buf[COIL_NCOILS/8]        = {0};
+static UCHAR  _mb3_discrete_buf[DISCRETE_INPUT_NDISCRETES/8] = {0};
+
+
+/* 2. 定义全局指针，并初始化为指向上述静态数组 */
+/* 这样 usRegHoldingBuf3 就是一个真正的指针变量，符合 .h 中的 extern USHORT * 声明 */
+USHORT *usRegHoldingBuf3       = _mb3_holding_buf;
+USHORT *usRegInputBuf3         = _mb3_input_buf;
+UCHAR  *usCoilBuf3             = _mb3_coil_buf;
+UCHAR  *usDiscreteInputBuf3    = _mb3_discrete_buf;
+
+/* 3. 结构体指针映射 */
+MODBUS3_HOLDING_REG_t *pMb3HoldData = (MODBUS3_HOLDING_REG_t*)_mb3_holding_buf;
+MODBUS3_INPUT_REG_t   *pMb3InputData = (MODBUS3_INPUT_REG_t*)_mb3_input_buf;
+
+/* 4. 实例标记 */
+volatile uint8_t g_mb_inst = 0;

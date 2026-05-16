@@ -1,0 +1,32 @@
+﻿flowchart TD
+  T0[StartDataCollectTask] --> T1[Init peripherals]
+  T1 --> T2[Loop delay 10ms]
+  T2 --> T3[Update time regs]
+  T3 --> T4[Read external ADC]
+  T4 --> D1{Light flag}
+
+  D1 -->|dark| B0[Back AD fixed 0 and set flag]
+  B0 --> T2
+
+  D1 -->|light| L0[Accumulate ref and trans, i++ and clear flag]
+  L0 --> D2{i reach 20}
+  D2 -->|no| T2
+  D2 -->|yes| W0[Write regs and calc absorbance]
+  W0 --> M1{Pool collect pending}
+  M1 -->|yes| M2[Mutex and accumulate]
+  M1 -->|no| M3[Skip]
+  M2 --> C0[Clear sums, DAC, DataConv, OpenAbsorbLED]
+  M3 --> C0
+  C0 --> T2
+
+  A0[ADS1220 ReadADCs] --> A1{Samples remaining}
+  A1 -->|yes| A2[Wait DRDY, read, switch channel]
+  A2 --> A1
+  A1 -->|no| A3[Average and output]
+  T4 --> A0
+  A3 --> D1
+
+  I0[ADC1 DMA TC ISR] --> I1[Pick DMA buffer]
+  I1 --> I2[Sum 32 samples per channel]
+  I2 --> I3[Average to InsideADCValue]
+  I3 --> I4[Write temp and level AD regs]

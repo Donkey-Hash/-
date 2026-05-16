@@ -1,0 +1,12 @@
+﻿flowchart TD
+  A[某串口进入 eMBxPoll] --> B[Acquire ModbusBusMutex]
+  B --> C[发送 Modbus 应答]
+  C --> D[WaitTC 无超时]
+  D --> E[TC 不置位]
+  E --> F[while 循环卡住]
+  F --> G[互斥锁不释放]
+  G --> H[其它串口任务阻塞]
+  H --> I[USART1 和 USART3 两屏超时]
+  F --> J[无法喂 IWDG]
+  J --> K[IWDG 复位]
+  K --> L[重启后 RW4229=21]

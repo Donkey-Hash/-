@@ -1,0 +1,12 @@
+﻿flowchart TD
+  A[AutoRun step3\n调用 StartPeristalticPump] --> B[StartPeristalticPump\nTimeoutFlag=false\n启动 MotorTimer]
+  B --> C[AutoRun while 循环\nwhile not TimeoutFlag\nosDelay 100]
+  C --> D[MotorTimer 到期\n进入 PumpTimerout 回调]
+  D --> E[PumpTimerout\nTimeoutFlag=true]
+  E --> F{while 仍不退出}
+  F --> G1[原因1\nTimeoutFlag 非 volatile\n优化或可见性问题]
+  F --> G2[原因2\n存在两个 TimeoutFlag\n地址不一致]
+  F --> G3[原因3\n其它任务再次调用 StartPeristalticPump\n把 TimeoutFlag 清零]
+  G1 --> H1[验证\n看反汇编是否重复读内存\n或单文件关优化]
+  G2 --> H2[验证\n对比 AutoRun 和 PumpTimerout 的 &TimeoutFlag 地址]
+  G3 --> H3[验证\n给 StartPeristalticPump 打断点\n确认并发调用]

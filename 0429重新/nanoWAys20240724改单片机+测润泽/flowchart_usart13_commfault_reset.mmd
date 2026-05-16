@@ -1,0 +1,20 @@
+﻿flowchart TD
+  A[现场现象\nUSART1屏 + USART3屏 同时通讯故障\n几秒后恢复\n流程回到上电清洗] --> B{恢复后\nRW4229 是否=21}
+
+  B -->|是| C[推断 Check_Self 被再次执行\n通常意味着 MCU 复位或任务重启]
+  C --> D{复位可能来源}
+
+  D --> E[软件复位命令\nHOST_CMD = 0xFF]
+  D --> F[HardFault 或卡死\nIWDG 超时复位]
+  D --> G[掉电 BOR 或硬件复位]
+
+  E --> H[代码路径\nRS232CmdProcess\nCMD_SLAVE_RESET\n禁用中断 + NVIC_SystemReset]
+  H --> I[抓 Modbus 写帧验证\n是否写入 HOST_CMD = 0x00FF]
+  I -->|有| J[屏幕脚本 误地址 或定时器触发\n优先排查屏幕侧]
+  I -->|无| K[nHostCMD 异常变成 0xFF\n可能 内存越界 DMA指针 野指针]
+
+  F --> L[验证\n通讯故障是否接近 30s\n符合 IWDG 约32s超时]
+  G --> M[验证\n电源波动 复位脚 棕断等硬件因素]
+
+  B -->|否| N[不一定是复位\n可能系统短暂阻塞导致两屏超时]
+  N --> O[重点检查\nSaveUserData flash 擦写耗时\n以及 ModbusBusMutex 持锁时间]

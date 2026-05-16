@@ -1,0 +1,348 @@
+USART3 Modbus-RTU 扩展说明
+================================
+
+1. 目标
+-------
+在现有代码基础上，为 USART3 增加一条独立的 Modbus-RTU 从站链路。
+
+约束条件：
+- 不破坏 USART1 现有 Modbus 从站逻辑。
+- 先只扩 USART3，不同时处理 USART6。
+- 尽量少动原有寄存器映射和业务回调。
+
+
+2. 原始问题
+-----------
+原工程虽然已经有：
+- UartsRxTask
+- USART3Task
+- USART6Task
+
+但底层 FreeModbus 被改成了单实例结构，导致多任务并不能形成多条独立总线。
+
+单实例问题主要体现在：
+- Modbus 协议栈状态是全局单份。
+- RTU 收发状态机和缓存是全局单份。
+- port 层串口对象是全局单份。
+- 事件队列是全局单份。
+- RTU T3.5 定时器是全局单份。
+
+因此原来如果同时启 USART1 / USART3 / USART6 的 Modbus，从软件结构上会互相覆盖状态。
+
+
+3. 本次方案
+-----------
+本次没有直接把整个 FreeModbus 重构成“通用 N 实例框架”，而是采用了更稳妥的过渡方案：
+
+- 保留 USART1 原有 Modbus 实现不变。
+- 并行增加一套 USART3 专用的第二实例接口，命名为 MB3。
+- MB3 拥有自己独立的：
+  - Init / Enable / Disable / Poll
+  - 串口 port 层
+  - 事件队列
+  - RTU 收发缓存与状态机
+  - T3.5 定时器
+  - FreeRTOS 信号量
+  - 中断入口
+
+这样做的目的：
+- 改动范围可控。
+- 不直接把 USART1 老逻辑一起重构，降低回归风险。
+- 先验证 USART3 从站链路是否跑通。
+
+
+4. 设计步骤
+-----------
+步骤 1：确认 USART3 现有代码入口
+- 保留 USART3Task 作为 USART3 从站任务入口。
+- 将 USART3Task 从原 eMBInit / eMBEnable / eMBPoll 切换到 eMB3Init / eMB3Enable / eMB3Poll。
+
+步骤 2：为 MB3 增加第二套 Modbus 协议栈入口
+- 在 mb.h 中新增：
+  - eMB3Init
+  - eMB3Enable
+  - eMB3Disable
+  - eMB3Poll
+
+- 在 mb.c 中新增第二套上下文变量：
+  - ucMBAddress3
+  - eMBCurrentMode3
+  - eMBState3
+  - peMBFrameSendCur3
+  - pvMBFrameStartCur3
+  - pvMBFrameStopCur3
+  - peMBFrameReceiveCur3
+  - pvMBFrameCloseCur3
+  - pxMBFrameCBByteReceived3
+  - pxMBFrameCBTransmitterEmpty3
+  - pxMBPortCBTimerExpired3
+
+步骤 3：为 MB3 增加第二套 RTU 实现
+- 在 mbrtu.c 中新增 USART3 对应的第二套 RTU 变量：
+  - eSndState3
+  - eRcvState3
+  - ucRTUInBuf3
+  - ucRTUOutBuf3
+  - pucSndBufferCur3
+  - usSndBufferCount3
+  - usRcvBufferPos3
+
+- 新增第二套 RTU 函数：
+  - eMBRTUInit3
+  - eMBRTUStart3
+  - eMBRTUStop3
+  - eMBRTUReceive3
+  - eMBRTUSend3
+  - xMBRTUReceiveFSM3
+  - xMBRTUTransmitFSM3
+  - xMBRTUTimerT35Expired3
+
+步骤 4：为 USART3 增加第二套串口 port 层
+- 在 portserial.c 中新增：
+  - pModbusUart3 = USART3
+  - vMBPortSerialEnable3
+  - xMBPortSerialInit3
+  - xMBPortSerialPutByte3
+  - xMBPortSerialWaitTC3
+  - xMBPortSerialGetByte3
+  - prvvUART3TxReadyISR
+  - prvvUART3RxISR
+
+步骤 5：为 USART3 增加第二套事件队列
+- 在 portevent.c 中新增：
+  - xMBPortEventInit3
+  - xMBPortEventPost3
+  - xMBPortEventGet3
+  - eQueuedEvent3
+  - xEventInQueue3
+
+并新增专用信号量：
+- USART3RxHandle
+
+步骤 6：为 USART3 增加独立 RTU 定时器
+- 保留 USART1 继续使用 TIM11。
+- 使用当前空闲的 TIM7 作为 USART3 的 T3.5 定时器。
+
+在 porttimer.c 中新增：
+- xMBPortTimersInit3
+- vMBPortTimersEnable3
+- vMBPortTimersDisable3
+- TIMER3ExpiredISR
+
+步骤 7：修改中断入口
+- USART3_IRQHandler 不再走原来的 pMbHostUart IDLE/DMA 主站逻辑。
+- 改为：
+  - RXNE -> prvvUART3RxISR
+  - TXE  -> prvvUART3TxReadyISR
+
+- TIM7_IRQHandler 改为调用：
+  - TIMER3ExpiredISR
+
+步骤 8：修改 FreeRTOS 资源
+- 在 freertos.c 中新增：
+  - USART3RxHandle
+
+- 启动 USART3Task。
+
+步骤 9：避免 USART6 继续踩旧单实例栈
+- 当前版本先不启动 USART6Task。
+- 原因是 USART6 仍然走旧的单实例 eMBInit/eMBEnable，和 USART1 共用一套状态，继续启动会互相覆盖。
+
+
+5. 本次修改过的文件
+-------------------
+1) FreeModbus/modbus/include/mb.h
+新增内容：
+- eMB3Init
+- eMB3Enable
+- eMB3Disable
+- eMB3Poll
+
+2) FreeModbus/modbus/include/mbport.h
+新增内容：
+- xMBPortEventInit3
+- xMBPortEventPost3
+- xMBPortEventGet3
+- xMBPortSerialInit3
+- vMBPortSerialEnable3
+- xMBPortSerialWaitTC3
+- xMBPortSerialGetByte3
+- xMBPortSerialPutByte3
+- xMBPortTimersInit3
+- vMBPortTimersEnable3
+- vMBPortTimersDisable3
+- pxMBFrameCBByteReceived3
+- pxMBFrameCBTransmitterEmpty3
+- pxMBPortCBTimerExpired3
+
+3) FreeModbus/port/port.h
+新增内容：
+- prvvUART3TxReadyISR 声明
+- prvvUART3RxISR 声明
+- TIMER3ExpiredISR 声明
+
+4) FreeModbus/port/portevent.c
+新增内容：
+- USART3RxHandle 外部引用
+- eQueuedEvent3
+- xEventInQueue3
+- xMBPortEventInit3
+- xMBPortEventPost3
+- xMBPortEventGet3
+
+5) FreeModbus/port/porttimer.c
+新增内容：
+- xMBPortTimersInit3
+- vMBPortTimersEnable3
+- vMBPortTimersDisable3
+- TIMER3ExpiredISR
+
+设计含义：
+- USART1 继续使用 TIM11。
+- USART3 使用 TIM7 做 RTU T3.5 定时。
+
+6) FreeModbus/port/portserial.c
+新增内容：
+- pModbusUart3 = USART3
+- vMBPortSerialEnable3
+- xMBPortSerialInit3
+- xMBPortSerialPutByte3
+- xMBPortSerialWaitTC3
+- xMBPortSerialGetByte3
+- prvvUART3TxReadyISR
+- prvvUART3RxISR
+
+7) FreeModbus/modbus/mb.c
+新增内容：
+- 第二套协议栈全局变量：
+  - ucMBAddress3
+  - eMBCurrentMode3
+  - eMBState3
+  - peMBFrameSendCur3
+  - pvMBFrameStartCur3
+  - pvMBFrameStopCur3
+  - peMBFrameReceiveCur3
+  - pvMBFrameCloseCur3
+  - pxMBFrameCBByteReceived3
+  - pxMBFrameCBTransmitterEmpty3
+  - pxMBPortCBTimerExpired3
+
+- 第二套协议栈函数：
+  - eMB3Init
+  - eMB3Enable
+  - eMB3Disable
+  - eMB3Poll
+
+8) FreeModbus/modbus/rtu/mbrtu.c
+新增内容：
+- 第二套 RTU 状态变量：
+  - eSndState3
+  - eRcvState3
+  - ucRTUInBuf3
+  - ucRTUOutBuf3
+  - pucSndBufferCur3
+  - usSndBufferCount3
+  - usRcvBufferPos3
+
+- 第二套 RTU 函数：
+  - eMBRTUInit3
+  - eMBRTUStart3
+  - eMBRTUStop3
+  - eMBRTUReceive3
+  - eMBRTUSend3
+  - xMBRTUReceiveFSM3
+  - xMBRTUTransmitFSM3
+  - xMBRTUTimerT35Expired3
+
+9) Tasks/src/uartsrxtask.c
+修改内容：
+- 新增外部信号量：
+  - USART3RxHandle
+
+- USART3Task 的调用链修改为：
+  - eMB3Init
+  - eMB3Enable
+  - osSemaphoreAcquire(USART3RxHandle, ...)
+  - eMB3Poll
+
+说明：
+- USART3Task 现在只处理 USART3 从站帧。
+- 不再复用 USART1 的 Comm3RxHandle。
+
+10) Src/freertos.c
+新增内容：
+- USART3RxHandle
+- USART3Rx_attributes
+
+修改内容：
+- 创建 USART3RxHandle
+- 保留 USART3Task 启动
+- 暂不启动 USART6Task，避免旧单实例栈冲突
+
+11) Src/stm32f4xx_it.c
+新增内容：
+- extern USART_TypeDef* pModbusUart3
+
+修改内容：
+- USART3_IRQHandler
+  - 改成处理 USART3 从站 RXNE / TXE
+  - 调用 prvvUART3RxISR / prvvUART3TxReadyISR
+
+- TIM7_IRQHandler
+  - 调用 TIMER3ExpiredISR
+
+
+6. 结构变化总结
+---------------
+改造前：
+- USART1 使用唯一一套 FreeModbus 栈。
+- USART3Task / USART6Task 虽然存在，但底层仍共用单实例状态。
+- 多条总线同时启用会互踩。
+
+改造后：
+- USART1 使用原有 MB 栈。
+- USART3 使用新增 MB3 栈。
+- USART1 和 USART3 拥有独立的：
+  - 协议栈状态
+  - RTU 收发缓存
+  - 事件队列
+  - 定时器
+  - 中断入口
+  - 任务信号量
+
+
+7. 当前版本的边界
+-----------------
+1) USART3 原先主站逻辑
+- 这次改造把 USART3 中断入口切到了从站 RTU（MB3）。
+- 为了避免“主站/从站”同时占用 USART3，已新增编译期配置宏 `APP_USART3_MODBUS_SLAVE_MB3`（Inc/main.h）：
+  - `APP_USART3_MODBUS_SLAVE_MB3 = 1`：USART3 作为 Modbus-RTU 从站口（MB3），并屏蔽旧的 ModbusMaster(DMA+IDLE) 发送/接收逻辑。
+  - `APP_USART3_MODBUS_SLAVE_MB3 = 0`：USART3 作为外设 Modbus 主站口（保留旧 ModbusMaster 逻辑），并不启动 USART3Task/MB3 相关中断分发。
+
+2) USART6 尚未扩展
+- 当前只完成 USART3 第二总线。
+- USART6 仍然是旧单实例路径，因此本次先不启动 USART6Task。
+
+3) 485 方向控制
+- 已在 `FreeModbus/port/portserial.c` 的 `vMBPortSerialEnable3()` 中补齐 USART3 的 485 DE/RE 方向控制：
+  - 发送：`H_RS485_TX`
+  - 接收/空闲：`H_RS485_RX`
+
+
+8. 后续建议
+-----------
+建议你下一步做以下确认：
+
+1) 在 Keil 全编一次，确认无编译错误。
+2) 用串口工具或主站软件直接测 USART3：
+   - 地址
+   - 波特率
+   - 03/04/06/10 等功能码
+3) 若需要切换 USART3 角色（主站/从站），优先通过 `APP_USART3_MODBUS_SLAVE_MB3` 统一配置，避免手动改多处文件。
+4) 如果硬件上 USART3 为 RS485 物理层，确认收发器方向管脚 `MbMaster_DIR` 与宏 `H_RS485_TX/H_RS485_RX` 对应正确。
+5) 如果后面还要扩 USART6，可以继续按照 MB3 这套模式复制成 MB6，或者再统一重构成真正多实例框架。
+
+
+9. 一句话概括
+-------------
+这次改动的本质不是“把 USART1 代码复制到 USART3”，而是“在保留 USART1 现网逻辑的前提下，给 USART3 并行搭了一套独立的第二 Modbus-RTU 从站栈”。

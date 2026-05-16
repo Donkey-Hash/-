@@ -1,0 +1,133 @@
+USART1 + USART3 双 MODBUS 从站（共用寄存器）测试方案
+==================================================
+
+目的
+----
+验证以下三件事：
+1) USART1 Modbus 从站正常
+2) USART3 作为第二条 Modbus 从站（MB3）正常，且不会被 printf/旧主站DMA逻辑干扰
+3) USART1 与 USART3 共用同一套寄存器映射/缓冲区，读值一致、写入可触发同样的命令处理
+
+准备
+----
+- 至少 1 个（建议 2 个）USB‑RS485 转换器
+  - 只用 1 个：先测 USART1，再把线换到 USART3 复测
+  - 用 2 个：可以同时压测 USART1 + USART3
+- 确认两条总线都是 RS485，A/B、GND 接对（两条总线不要并在一起）
+- 确保每条总线上只有一个主站（PC 软件就是主站），不要还有其它主站设备同时在发
+
+必须确认的编译配置（非常关键）
+----------------------------
+1) USART3 作为第二条 Modbus 从站开关
+- 文件：Inc/main.h
+- 宏：APP_USART3_MODBUS_SLAVE_MB3
+- 期望值：
+  #define APP_USART3_MODBUS_SLAVE_MB3 1
+
+2) USART6Task 挂起（不创建该线程）
+- 文件：Inc/main.h
+- 宏：APP_USART6_MODBUS_TASK_ENABLE
+- 期望值：
+  #define APP_USART6_MODBUS_TASK_ENABLE 0
+
+补充说明（不用改，只是理解）
+- USART6Task 的创建点在 Src/freertos.c 内部：
+  #if APP_USART6_MODBUS_TASK_ENABLE
+    USART6TaskHandle = osThreadNew(USART6Task, NULL, &USART6Task_attributes);
+  #endif
+
+Modbus 通讯参数（默认值）
+----------------------
+- Slave ID：默认 1
+  - 依据：Bsp/src/FlashUserData.c 中初始化 pMbHoldData->nLocalAddr = 1
+- 波特率：默认 115200
+  - 依据：Bsp/src/FlashUserData.c 中初始化 pMbHoldData->nBand = 1152
+  - 代码中初始化 eMBInit/eMB3Init 使用 100 * nBand，因此 1152 -> 115200 bps
+- 串口格式：8N1 / 无校验（Parity None）
+- 超时建议：先用 500ms（跑通后再调小）
+
+地址口径说明（避免填错）
+----------------------
+本工程 FreeModbus 对“保持寄存器”的地址处理是：
+- 主站请求的寄存器地址，在协议栈内部会先做 usRegAddress++（+1）再传给回调
+- REG_HOLDING_START 在 FreeModbus/modbus/include/Modbus.h 中定义为 1
+因此很多主站软件可按以下两种方式填写：
+- 如果软件“从 0 开始计数”：读第一组保持寄存器时，起始地址填 0
+- 如果软件用 40001 这种显示：读第一组保持寄存器时，起始地址填 40001
+
+测试步骤（按顺序照做）
+--------------------
+
+Step 1：编译下载
+- Keil 打开工程：MDK-ARM/nanoWAys.uvprojx
+- 全量 Build（确保 0 error）
+- 下载到板子，上电运行
+
+Step 2（可选但推荐）：确认 USART6Task “确实没创建”
+- 方式 A：Keil 断点/Watch
+  - 在 MX_FREERTOS_Init() 执行完后观察：
+    - USART6TaskHandle == 0  （没创建就是 0）
+    - USART3TaskHandle != 0  （APP_USART3_MODBUS_SLAVE_MB3=1 时应创建）
+
+Step 3：USART1 基础读通（功能码 03）
+- USB‑RS485 接到 USART1 的 RS485 总线
+- 主站软件设置：
+  - Slave ID = 1
+  - Baud = 115200
+  - Parity = None
+  - Data bits = 8
+  - Stop bits = 1
+- 发送：03 Read Holding Registers
+  - 起始地址：0（或 40001）
+  - 数量：10
+- 通过标准：稳定返回数据（不超时、CRC 不报错）
+
+Step 4：USART3 基础读通（功能码 03）
+- USB‑RS485 接到 USART3 的 RS485 总线
+- 参数同 Step 3
+- 同样读取保持寄存器 0 开始 10 个
+- 通过标准：稳定返回数据（不超时、CRC 不报错）
+
+Step 5：USART1/USART3 “共享寄存器一致性”验证（读对比）
+- 在 USART1 上读：保持寄存器起始 0，数量 50
+- 在 USART3 上读：保持寄存器起始 0，数量 50
+- 通过标准：两边读出来的 50 个 16‑bit 原始值应完全一致
+
+Step 6：写入触发验证（选“安全命令”避免误动作）
+目的：验证 USART1/USART3 写寄存器后，都会触发同样的命令处理流程。
+
+建议使用 CMD_SET_BAUD（值 = 1），其在任务处理里只会清空命令，不会开阀/跑泵，风险最低。
+
+操作（先在 USART1 做一遍，再在 USART3 做一遍）：
+- 发送：06 Write Single Register
+  - 写寄存器：0（或 40001）
+  - 写入值：1
+- 写完后立刻再读：03 Read Holding Registers
+  - 起始地址：0（或 40001）
+  - 数量：2
+- 通过标准：
+  - 第一个保持寄存器（命令寄存器）应很快变回 0（表示命令已被处理并清空）
+  - USART1 与 USART3 都能做到这一点
+
+Step 7：双口同时压测（验证不会互相干扰）
+- 两个 USB‑RS485 分别接 USART1 与 USART3
+- 两个主站软件实例同时循环读：
+  - 功能码 03
+  - 起始 0
+  - 长度 50
+  - 周期 200ms（可按需要调整）
+- 跑 5~10 分钟
+- 通过标准：两边错误计数基本为 0（不应持续超时/CRC 错）
+
+Step 8（非必做）：USART6Task 确认“没响应”
+- 若你能接到 USART6 的物理口，对 USART6 发同样的 Modbus 读请求
+- 通过标准：应超时无响应（因为 USART6Task 不创建）
+
+若 Step 3/4 读不通，按此顺序排查
+------------------------------
+1) Slave ID/波特率不对：优先尝试 ID=1 + 115200；不行再尝试历史常见：9600/19200/38400/57600/115200
+2) A/B 接反：交换 A、B 再试
+3) 没共地：把 GND 连上再试
+4) 终端电阻/偏置：长线/干扰大时检查 120Ω 终端和偏置电阻
+5) USART3 方向控制：若 USART3 “偶尔回一次，之后全超时”，用示波器看 485 DE/RE 是否能在应答后回到接收
+

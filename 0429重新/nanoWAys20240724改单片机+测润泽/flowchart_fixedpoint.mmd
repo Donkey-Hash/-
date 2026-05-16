@@ -1,0 +1,20 @@
+﻿flowchart TD
+  PWR[上电] --> INIT[main初始化/InitUserData]
+  INIT --> RTOS[创建任务/启动调度]
+  RTOS --> PROC[ProcessControlTask]
+
+  PROC --> MODE{nStartMode==3?}
+  MODE -- 否 --> PROC
+  MODE -- 是 --> WAIT[定点模式待机 nAutoRun=0]
+
+  WAIT -->|RTC Alarm A| RTC[RTC_Alarm_IRQHandler]
+  RTC --> SET[AutoStep=1 RW50=1 nAutoRun=1]
+  SET --> DETECT[ProcessControlTask检测nAutoRun>0]
+  DETECT --> START[清零nAutoRun nDevBeRunning=1]
+  START --> AR[AutoRun AutoStep状态机]
+
+  AR --> STEPS[执行AutoStep 1..19]
+  STEPS --> STEP20[AutoStep=20 模式收尾]
+  STEP20 --> ALARM[Set_MultiAlarm 设置下一闹钟]
+  ALARM --> EXIT[AutoStep=0 退出等待]
+  EXIT --> WAIT

@@ -1,0 +1,23 @@
+﻿flowchart TD
+  PWR[上电] --> INIT[main初始化/InitUserData]
+  INIT --> RTOS[创建任务/启动调度]
+  RTOS --> MB[Modbus任务 USART3/USART6]
+  RTOS --> PROC[ProcessControlTask]
+
+  PROC --> MODE{nStartMode==1?}
+  MODE -- 否 --> PROC
+  MODE -- 是 --> IDLE[连续模式待机 nAutoRun=0]
+
+  MB --> RX[收到Modbus写Holding寄存器]
+  RX --> HOLD[eMBRegHoldingCB 写入nAutoRun]
+  HOLD --> TRIG[nAutoRun>0]
+
+  IDLE --> CHECK{ProcessControlTask检测nAutoRun>0}
+  CHECK -- 否 --> IDLE
+  CHECK -- 是 --> START[RW50=nAutoRun 清零nAutoRun AutoStep=1]
+  START --> AR[AutoRun AutoStep状态机]
+
+  AR --> STEPS[执行AutoStep 1..19]
+  STEPS --> STEP20[AutoStep=20 模式收尾]
+  STEP20 --> LOOP[连续模式 AutoStep=1]
+  LOOP --> STEPS

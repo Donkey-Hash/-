@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "iwdg.h": "c",
+        "flashuserdata.h": "c",
+        "modbusmaster.h": "c",
+        "cmsis_os.h": "c",
+        "yssyringepump.h": "c",
+        "uartsrxtask.h": "c"
+    }
+}

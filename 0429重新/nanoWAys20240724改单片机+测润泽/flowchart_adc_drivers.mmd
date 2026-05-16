@@ -1,0 +1,76 @@
+﻿flowchart TD
+  %% =========================
+  %% 任务：数据采集线程（外部 ADC + 数据处理）
+  %% =========================
+  subgraph T["任务：StartDataCollectTask()（10ms 循环）"]
+    T0[任务启动] --> T1[初始化<br/>OpenLLLED/OpenAbsorbLED<br/>InitRTC<br/>StartADCwithDoubleBuferDMA<br/>LL_SPI_Enable(SPI2)<br/>ADS1220Config]
+    T1 --> T2{{循环：osDelay(10)}}
+    T2 --> T3[Get_RealTime()<br/>写入时间寄存器]
+    T3 --> T4[ReadADs(ExADCsValue,4)<br/>（内部调用 ReadADCs）]
+    T4 --> T5{{FlagAbsLightOn ?}}
+
+    T5 -->|否：暗场| T6[背景值（当前代码）<br/>tRefBackAD=0<br/>tTransBackAD=0<br/>SumBack += 0<br/>FlagAbsLightOn=true]
+    T6 --> T2
+
+    T5 -->|是：亮场| T7[读取亮场 AD<br/>tRefAD=ExADCsValue[REF]<br/>tTransAD=ExADCsValue[ABS]]
+    T7 --> T8[累加与计数<br/>sumref += tRefAD - tRefBackAD<br/>sumtrs += tTransAD - tTransBackAD<br/>i++<br/>FlagAbsLightOn=false]
+    T8 --> T9{{i == SUM_CNT(20) ?}}
+    T9 -->|否| T2
+
+    T9 -->|是| T10[写 Modbus Input（代码现状）<br/>nPoolRefLtAD = 1<br/>nPoolTranLtAD = (sumtrs+5)/20<br/>nPoolRefLtBackAD = 1<br/>nPoolTranLtBackAD = (SumTransBackAD+5)/20]
+    T10 --> T11{{PoolLtADsOpt.nNumOfCollect > 0 ?}}
+    T11 -->|是| T12[osMutexWait(osADSMutexHandle,500)<br/>累加/递减/Release<br/>失败：CounterADSMutexError++]
+    T11 -->|否| T13[跳过同步采集]
+    T12 --> T14
+    T13 --> T14
+
+    T14[计算吸光度<br/>fAbsorbance = log(Ref/Tran)] --> T15[清零：i/sumref/sumtrs/SumBack...]
+    T15 --> T16[ResultIOut()<br/>DAC 输出]
+    T16 --> T17[DataConv(InsideADCValue)<br/>换算 CPU 温度/VBAT]
+    T17 --> T18[OpenAbsorbLED()<br/>打开吸光灯]
+    T18 --> T2
+  end
+
+  %% =========================
+  %% 驱动：外部 ADC（ADS1220）
+  %% =========================
+  subgraph ADS["驱动：Bsp/src/ADS1220.c → ReadADCs()（SPI2 + DRDY 轮询）"]
+    A0[SetAdsSingleChennel(3)] --> A1{{u2Samples < count ?}}
+    A1 -->|是| A2[等待 DRDY（轮询+Timeout）<br/>ADS1220ReadData() → TempAD]
+    A2 --> A3[SetAdsSingleChennel(2)<br/>res3 += TempAD]
+    A3 --> A4[等待 DRDY（轮询+Timeout）<br/>ADS1220ReadData() → TempAD]
+    A4 --> A5[SetAdsSingleChennel(3)<br/>res2 += TempAD<br/>u2Samples++]
+    A5 --> A1
+    A1 -->|否| A6[res2/=count; res3/=count<br/>res2>>=8; res3>>=8]
+    A6 --> A7[pAD[0]=res3<br/>pAD[1]=res2]
+  end
+
+  %% 任务调用驱动
+  T4 --> ADS
+  ADS --> T5
+
+  %% =========================
+  %% 中断：内部 ADC（ADC1 DMA TC）
+  %% =========================
+  subgraph ISR["中断：Src/stm32f4xx_it.c → DMA2_Stream0_IRQHandler()（内部 ADC1 DMA TC）"]
+    I0[DMA2 Stream0 TC0 触发] --> I1[判断 CurrentTargetMem<br/>选择 AD1Buffer / AD1BufferM1]
+    I1 --> I2[累加 32 次采样<br/>TempADs += (pExS+i)->nAD_xx]
+    I2 --> I3[四舍五入并平均<br/>(sum + 16)/32]
+    I3 --> I4[更新 InsideADCValue]
+    I4 --> I5[写 Modbus Input<br/>nPoolTempAD/nCaveTempAD<br/>nLL1AD/nLL2AD]
+  end
+
+  %% =========================
+  %% 共享数据（任务与中断之间）
+  %% =========================
+  S1[(InsideADCValue<br/>共享结构)]:::shared
+  R1[(pMbInputData / pMbHoldData<br/>Modbus 寄存器映射)]:::shared
+
+  I4 --> S1
+  I5 --> R1
+  T10 --> R1
+  T14 --> R1
+  T17 --> R1
+  S1 --> T17
+
+  classDef shared fill:#f7f7f7,stroke:#666,stroke-width:1px;
