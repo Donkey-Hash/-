@@ -15,7 +15,7 @@
   *                             www.st.com/SLA0044
   *
   ******************************************************************************
-  */
+  */   
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
@@ -76,10 +76,10 @@ void _sys_exit(int x)
 } 
 
 /**
-  * º¯Êý¹¦ÄÜ: ÖØ¶¨Ïòc¿âº¯Êýprintfµ½USARTx
-  * ÊäÈë²ÎÊý: ÎÞ
-  * ·µ »Ø Öµ: ÎÞ
-  * Ëµ    Ã÷£ºÎÞ
+  * ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½: ï¿½Ø¶ï¿½ï¿½ï¿½cï¿½âº¯ï¿½ï¿½printfï¿½ï¿½USARTx
+  * ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½: ï¿½ï¿½
+  * ï¿½ï¿½ ï¿½ï¿½ Öµ: ï¿½ï¿½
+  * Ëµ    ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
   */
 #if APP_USART3_MODBUS_SLAVE_MB3
 int fputc(int ch, FILE *f)
@@ -96,21 +96,21 @@ int fgetc(FILE * f)
 #else
 int fputc(int ch, FILE *f)
 { 
-	while(!LL_USART_IsActiveFlag_TXE(USART3)){}//µÈ´ý·¢ËÍÎª¿Õ
+	while(!LL_USART_IsActiveFlag_TXE(USART3)){}//ï¿½È´ï¿½ï¿½ï¿½ï¿½ï¿½Îªï¿½ï¿½
 	LL_USART_TransmitData8(USART3,(uint8_t)ch);	
-	while(LL_USART_IsActiveFlag_TC(USART3)==RESET){}//µÈ´ý·¢ËÍÍê³É
+	while(LL_USART_IsActiveFlag_TC(USART3)==RESET){}//ï¿½È´ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 	return ch;
 }
 
 /**
-  * º¯Êý¹¦ÄÜ: ÖØ¶¨Ïòc¿âº¯Êýgetchar,scanfµ½USARTx
-  * ÊäÈë²ÎÊý: ÎÞ
-  * ·µ »Ø Öµ: ÎÞ
-  * Ëµ    Ã÷£ºÎÞ
+  * ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½: ï¿½Ø¶ï¿½ï¿½ï¿½cï¿½âº¯ï¿½ï¿½getchar,scanfï¿½ï¿½USARTx
+  * ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½: ï¿½ï¿½
+  * ï¿½ï¿½ ï¿½ï¿½ Öµ: ï¿½ï¿½
+  * Ëµ    ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
   */
 int fgetc(FILE * f)
 {
-	while(!LL_USART_IsActiveFlag_RXNE(USART3)){}  //RXNEÎª1Ê±£¬ÉÏÒ»Êý¾ÝÒÑ½ÓÊÕ²¢¿É¶ÁÈ¡	
+	while(!LL_USART_IsActiveFlag_RXNE(USART3)){}  //RXNEÎª1Ê±ï¿½ï¿½ï¿½ï¿½Ò»ï¿½ï¿½ï¿½ï¿½ï¿½Ñ½ï¿½ï¿½Õ²ï¿½ï¿½É¶ï¿½È¡	
 	return LL_USART_ReceiveData8(USART3);
 }
 #endif
@@ -163,54 +163,54 @@ int main(void)
   MX_IWDG_Init();
   /* USER CODE BEGIN 2 */
 //	LL_IWDG_DisableWriteAccess(IWDG);
-	LL_RCC_ClearResetFlags();			//Çå³ý¸´Î»±êÖ¾Î»
-	LL_USART_DeInit(USART1);			// ÖØÐÂ³õÊ¼»¯´®¿Ú1
-	Buzzer_ON							// ¿ªÆô·äÃùÆ÷ÌáÊ¾ÏµÍ³´ò¿ª
-	InitUserData();						// ×Ü³ÌÐòÔËÐÐÇ°ÏÈ³õÊ¼»¯ModbusÏßÈ¦µÄÊý¾Ý
+	LL_RCC_ClearResetFlags();			//ï¿½ï¿½ï¿½ï¿½ï¿½Î»ï¿½ï¿½Ö¾Î»
+	LL_USART_DeInit(USART1);			// ï¿½ï¿½ï¿½Â³ï¿½Ê¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½1
+	Buzzer_ON							// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê¾ÏµÍ³ï¿½ï¿½
+	InitUserData();						// ï¿½Ü³ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ç°ï¿½È³ï¿½Ê¼ï¿½ï¿½Modbusï¿½ï¿½È¦ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 	
-	/* ²âÊÔ´úÂëÉèÖÃÊÔ¼ÁÓàÁ¿ */
+	/* ï¿½ï¿½ï¿½Ô´ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ô¼ï¿½ï¿½ï¿½ï¿½ï¿½ */
 	if((pMbHoldData->nReagent1Volume <= 50)||(pMbHoldData->nReagent2Volume <= 50)||(pMbHoldData->nReagent3Volume <= 50))
 	{
-		pMbHoldData->nReagent1Volume = 500;		// ÊÔ¼Á1ÉèÖÃÎª500ml
-		pMbHoldData->nReagent2Volume = 500;		// ÊÔ¼Á2ÉèÖÃÎª500ml
-		pMbHoldData->nReagent3Volume = 500;		// ÊÔ¼Á3ÉèÖÃÎª500ml
-		pMbHoldData->nWaterVolume = 500;		// ÕôÁóË®Ìå»ýÉèÖÃÎª500ml
+		pMbHoldData->nReagent1Volume = 500;		// ï¿½Ô¼ï¿½1ï¿½ï¿½ï¿½ï¿½Îª500ml
+		pMbHoldData->nReagent2Volume = 500;		// ï¿½Ô¼ï¿½2ï¿½ï¿½ï¿½ï¿½Îª500ml
+		pMbHoldData->nReagent3Volume = 500;		// ï¿½Ô¼ï¿½3ï¿½ï¿½ï¿½ï¿½Îª500ml
+		pMbHoldData->nWaterVolume = 500;		// ï¿½ï¿½ï¿½ï¿½Ë®ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Îª500ml
 		pMbInputData->nFunErrorCode = REAGENT1_EMPTY;
 	}
 	/************************************************/
 
-	pMbHoldData->nResetRun = 0;					// ¸´Î»±êÖ¾=0
-	pMbInputData->nFunErrorCode = SYS_OK;		// ÉÏµçÇå¿Õ´íÎó´úÂë
+	pMbHoldData->nResetRun = 0;					// ï¿½ï¿½Î»ï¿½ï¿½Ö¾=0
+	pMbInputData->nFunErrorCode = SYS_OK;		// ï¿½Ïµï¿½ï¿½ï¿½Õ´ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 	
-	/* ²âÊÔ´úÂë:Æô¶¯Ä£Ê½ */
-	pMbHoldData->nStartMode = 2;				// ²âÊÔ(Ä£Ê½ÉèÖÃÎªÖÜÆÚÄ£Ê½)
-	pMbHoldData->nClockTime = 60;				// ²ÉË®Ñù¶¨Ê±1¸öÐ¡Ê±
+	/* ï¿½ï¿½ï¿½Ô´ï¿½ï¿½ï¿½:ï¿½ï¿½ï¿½ï¿½Ä£Ê½ */
+	pMbHoldData->nStartMode = 2;				// ï¿½ï¿½ï¿½ï¿½(Ä£Ê½ï¿½ï¿½ï¿½ï¿½Îªï¿½ï¿½ï¿½ï¿½Ä£Ê½)
+	pMbHoldData->nClockTime = 60;				// ï¿½ï¿½Ë®ï¿½ï¿½ï¿½ï¿½Ê±1ï¿½ï¿½Ð¡Ê±
 	//pMbHoldData->nControlledStep = CMD_PERISTALTIC_PUMP_OPT;
 	//pMbHoldData->nStepperMotorSpeed = 1200;
 	//pMbHoldData->nPeristalticPumpParm = 400;
 	
-	/* ²âÊÔRTCÊÇ·ñ¿ªÆô */
-//	/* 1. È·ÈÏ EXTI Line17 ÒÑÅäÖÃ */
+	/* ï¿½ï¿½ï¿½ï¿½RTCï¿½Ç·ï¿½ï¿½ï¿½ */
+//	/* 1. È·ï¿½ï¿½ EXTI Line17 ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ */
 //	if (!(EXTI->IMR & EXTI_IMR_MR17))
 //		pMbHoldData->RW50 = 56;
 //	
-//	/* 2. È·ÈÏ RTC Alarm A ÒÑÊ¹ÄÜ */
+//	/* 2. È·ï¿½ï¿½ RTC Alarm A ï¿½ï¿½Ê¹ï¿½ï¿½ */
 //	if (!(RTC->CR & RTC_CR_ALRAE))
 //		pMbHoldData->RW50 = 57;
 //	
-//	/* 3. È·ÈÏ NVIC ÒÑÊ¹ÄÜ */
+//	/* 3. È·ï¿½ï¿½ NVIC ï¿½ï¿½Ê¹ï¿½ï¿½ */
 //	if (!(NVIC->ISER[(uint32_t)(RTC_Alarm_IRQn >> 5)] & (1 << (RTC_Alarm_IRQn & 0x1F))))
 //		pMbHoldData->RW50 = 58;
 	
-	AlarmA_Off();	// ÏÈ¹Ø±ÕÄÖÖÓ
+	AlarmA_Off();	// ï¿½È¹Ø±ï¿½ï¿½ï¿½ï¿½ï¿½
 	
-	/* ²âÊÔ´úÂë */
+	/* ï¿½ï¿½ï¿½Ô´ï¿½ï¿½ï¿½ */
 	pMbHoldData->nCombiValve = 0;
 	pMbHoldData->nValveCtl = 0;
-	//pMbInputData->nDevBeRunning = 0;	// ÒÇÆ÷ÕýÔÚÔËÐÐ
-	//Set_MultiAlarm(usCoilBuf);		// Ìøµ½ÏÂ¸öÄÖÖÓ
+	//pMbInputData->nDevBeRunning = 0;	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+	//Set_MultiAlarm(usCoilBuf);		// ï¿½ï¿½ï¿½ï¿½ï¿½Â¸ï¿½ï¿½ï¿½ï¿½ï¿½
 	
-	//LL_USART_TransmitData8(USART3, 'A');	// ²âÊÔ´®¿Ú3
+	//LL_USART_TransmitData8(USART3, 'A');	// ï¿½ï¿½ï¿½Ô´ï¿½ï¿½ï¿½3
 	
   /* USER CODE END 2 */
 
